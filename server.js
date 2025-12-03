@@ -1,158 +1,185 @@
-// server.js
-const express = require("express");
-const { WebSocketServer } = require("ws");
 const path = require("path");
-
+const express = require("express");
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Servir archivos estáticos (tu sitio)
-app.use(express.static(path.join(__dirname, "/")));
-app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "index.html"));
-});
+// Servir archivos estáticos
+app.use(express.static(path.join(__dirname)));
 
-
+// Servidor HTTP
 const server = app.listen(PORT, () => {
-  console.log("Servidor corriendo en http://localhost:" + PORT);
+    console.log("Servidor web iniciado en http://localhost:" + PORT);
 });
 
-// WebSocket Server
-const wss = new WebSocketServer({ server });
+// WebSocket
+const WebSocket = require("ws");
+const wss = new WebSocket.Server({ server });
 
-// Map de playerKey -> ws
-const players = new Map();
+/* =====================================================================
+   ESTADO DEL SERVIDOR
+===================================================================== */
+let players = new Map();      // playerKey -> ws
 let adminSocket = null;
-let lastNumbers = []; // historial
 
+/* =====================================================================
+   ENVÍO SEGURO
+===================================================================== */
 function safeSend(ws, obj) {
-  try {
-    if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(obj));
-  } catch (e) { /* ignore */ }
+    try {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify(obj));
+        }
+    } catch (e) {
+        console.log("safeSend error:", e);
+    }
 }
 
-function broadcastToAll(obj) {
-  const msg = JSON.stringify(obj);
-  wss.clients.forEach(c => {
-    if (c.readyState === c.OPEN) c.send(msg);
-  });
-}
-
+/* =====================================================================
+   NOTIFICAR LISTA DE JUGADORES AL ADMIN
+===================================================================== */
 function broadcastPlayerListToAdmin() {
-  // Enviar lista de jugadores conectados (keys)
-  const lista = Array.from(players.keys());
-  if (adminSocket) {
-    safeSend(adminSocket, { type: "player-list", players: lista });
-  }
+    const lista = Array.from(players.keys());
+    console.log("📤 ENVIANDO LISTA AL ADMIN:", lista);
+
+    if (adminSocket) {
+        safeSend(adminSocket, { type: "player-list", players: lista });
+    } else {
+        console.log("⚠️ No hay admin conectado.");
+    }
 }
 
+/* =====================================================================
+   CONEXIONES WS
+===================================================================== */
 wss.on("connection", (ws) => {
-  ws.isAlive = true;
-
-  ws.on("pong", () => {
     ws.isAlive = true;
-  });
 
-  ws.on("message", (msg) => {
-    let data;
-    try { data = JSON.parse(msg); } catch (e) { return; }
+    console.log("🔵 Nueva conexión WebSocket");
 
-    // Player se conecta y envía su key (player-<nombre>)
-    if (data.type === "player-join" && data.playerKey) {
-      const key = data.playerKey;
-      players.set(key, ws);
-      ws.playerKey = key;
+    ws.on("pong", () => (ws.isAlive = true));
 
-      // enviar estado inicial (números ya sorteados)
-      safeSend(ws, { type: "state", lastNumbers });
+    /* ---------------------------------------
+       MENSAJE RECIBIDO
+    ----------------------------------------*/
+    ws.on("message", (msg) => {
+        let data;
+        try { 
+            data = JSON.parse(msg); 
+        } catch (e) { 
+            console.log("❌ JSON inválido:", msg);
+            return;
+        }
 
-      // notificar admin lista
-      broadcastPlayerListToAdmin();
-      return;
-    }
+        console.log("📥 Mensaje recibido:", data);
 
-    // Admin se conecta
-    if (data.type === "admin-join") {
-      adminSocket = ws;
-      // enviar estado actual con jugadores y números
-      safeSend(ws, {
-        type: "state",
-        players: Array.from(players.keys()),
-        lastNumbers
-      });
-      return;
-    }
+        /* =============================================================
+           PLAYER ENTRA
+        ============================================================= */
+        if (data.type === "player-join" && data.playerKey) {
+            const key = data.playerKey;
 
-    // Admin asigna cartones a un playerKey
-    if (data.type === "assign-cartones" && data.playerKey && data.cartones) {
-      const target = players.get(data.playerKey);
-      // enviar al jugador si está conectado
-      if (target) {
-        safeSend(target, {
-          type: "assign-cartones",
-          cartones: data.cartones
-        });
-      }
-      // también informar al admin (confirmación)
-      if (adminSocket && adminSocket.readyState === adminSocket.OPEN) {
-        safeSend(adminSocket, {
-          type: "assign-confirm",
-          playerKey: data.playerKey,
-          cartonesCount: (data.cartones || []).length
-        });
-      }
-      return;
-    }
+            players.set(key, ws);
+            ws.playerKey = key;
 
-    // Admin saca número -> broadcast
-    if (data.type === "new-number" && typeof data.number === "number") {
-      if (!lastNumbers.includes(data.number)) {
-        lastNumbers.push(data.number);
-      }
-      broadcastToAll({ type: "number", number: data.number });
-      return;
-    }
+            console.log(`🟢 PLAYER JOIN -> ${key} (total: ${players.size})`);
 
-    // Reiniciar sorteo (admin)
-    if (data.type === "reset-numbers") {
-      lastNumbers = [];
-      broadcastToAll({ type: "reset" });
-      return;
-    }
+            broadcastPlayerListToAdmin();
+            return;
+        }
 
-    // Jugador reporta terna/cuaterna/quintina/bingo al admin
-    if (data.type === "report" && data.report) {
-      if (adminSocket) {
-        safeSend(adminSocket, {
-          type: "report",
-          report: data.report
-        });
-      }
-      return;
-    }
+        /* =============================================================
+           ADMIN ENTRA
+        ============================================================= */
+        if (data.type === "admin-join") {
+            adminSocket = ws;
+            ws.isAdmin = true;
 
-    // Solicitud explícita de lista de jugadores (admin)
-    if (data.type === "request-player-list") {
-      broadcastPlayerListToAdmin();
-      return;
-    }
-  });
+            console.log("🟡 ADMIN conectado.");
 
-  ws.on("close", () => {
-    // limpiar registros
-    if (ws === adminSocket) adminSocket = null;
-    if (ws.playerKey) players.delete(ws.playerKey);
-    broadcastPlayerListToAdmin();
-  });
+            // Enviar estado inicial
+            safeSend(ws, {
+                type: "state",
+                players: Array.from(players.keys()),
+            });
 
-  ws.on("error", ()=>{ /* noop */ });
+            return;
+        }
+
+        /* =============================================================
+           ADMIN PIDE FORZADO LISTA
+        ============================================================= */
+        if (data.type === "request-player-list") {
+            console.log("🟠 Admin pidió la lista manualmente.");
+            broadcastPlayerListToAdmin();
+            return;
+        }
+
+        /* =============================================================
+           NUEVO NÚMERO
+        ============================================================= */
+        if (data.type === "new-number") {
+            wss.clients.forEach(c =>
+                safeSend(c, { type: "number", number: data.number })
+            );
+        }
+
+        /* =============================================================
+           RESET
+        ============================================================= */
+        if (data.type === "reset-numbers") {
+            wss.clients.forEach(c => safeSend(c, { type: "reset" }));
+        }
+
+        /* =============================================================
+           ASIGNAR CARTONES
+        ============================================================= */
+        if (data.type === "assign-cartones") {
+            const { playerKey, cartones } = data;
+            const targetWS = players.get(playerKey);
+
+            if (targetWS) {
+                safeSend(targetWS, { type: "cartones", cartones });
+                console.log("🟦 Cartones enviados al jugador", playerKey);
+            } else {
+                console.log("⚠️ Jugador no encontrado para cartones:", playerKey);
+            }
+        }
+
+        /* =============================================================
+           REPORTES (Terna, Quintina, Bingo)
+        ============================================================= */
+        if (data.type === "report" && adminSocket) {
+            safeSend(adminSocket, { type: "report", report: data.report });
+            console.log("📣 Reporte recibido y reenviado al admin:", data.report);
+        }
+    });
+
+    /* ---------------------------------------
+       CLIENTE DESCONECTADO
+    ----------------------------------------*/
+    ws.on("close", () => {
+        console.log("🔴 Socket cerrado:", ws.playerKey || "desconocido");
+
+        if (ws.playerKey) {
+            players.delete(ws.playerKey);
+            broadcastPlayerListToAdmin();
+        }
+
+        if (ws === adminSocket) {
+            adminSocket = null;
+            console.log("⚠️ Admin desconectado.");
+        }
+    });
 });
 
-// ping-pong para detectar conexiones muertas
+/* =====================================================================
+   PING PARA DETECTAR CAÍDA DE WS
+===================================================================== */
 setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if (!ws.isAlive) return ws.terminate();
-    ws.isAlive = false;
-    ws.ping();
-  });
-}, 30000);
+    wss.clients.forEach(ws => {
+        if (!ws.isAlive) return ws.terminate();
+        ws.isAlive = false;
+        ws.ping();
+    });
+}, 10000);
+
