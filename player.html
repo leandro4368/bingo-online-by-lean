@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mis Cartones</title>
+
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<style>
+body {
+    background: #060d18;
+    color: white;
+    padding: 20px;
+    font-family: Arial, sans-serif;
+}
+
+.carton {
+    background: rgba(255,255,255,0.06);
+    padding: 15px;
+    border-radius: 10px;
+    margin-bottom: 30px;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.titulo {
+    text-align: center;
+    margin-bottom: 10px;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.tabla {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.tabla td {
+    width: 11%;
+    height: 55px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: bold;
+    border: 1px solid rgba(255,255,255,0.15);
+    background: #1b2735;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tabla .vacio {
+    background: transparent;
+    border: none;
+    cursor: default;
+}
+
+.marcada {
+    background: #198754 !important;
+    color: white;
+}
+
+.flashAuto {
+    animation: flashAuto .8s ease;
+    background: #ffc107 !important;
+    color: black !important;
+}
+
+@keyframes flashAuto {
+    0% { transform: scale(1.3); opacity:0.2; }
+    50%{ transform: scale(1); opacity:1; }
+    100%{ transform: scale(1); }
+}
+
+/* Animación últimos 3 números */
+#numerosAnimP {
+    display: flex;
+    gap: 20px;
+    margin-top: 25px;
+    justify-content: center;
+}
+
+.numBoxP {
+    font-size: 40px;
+    font-weight: bold;
+    opacity: 0;
+    transform: scale(0.5);
+    transition: all .4s ease;
+    color: #ffc107;
+}
+
+.numBoxP.show {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.fadeOutP {
+    opacity: 0 !important;
+    transform: scale(0.2) !important;
+}
+
+/* Notificación local */
+.notifyLocal {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    background: rgba(0,0,0,0.6);
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+</style>
+</head>
+<body>
+
+<h3 id="jugador" class="mb-4"></h3>
+
+<!-- últimos 3 números -->
+<div id="numerosAnimP"></div>
+
+<!-- contenedor de cartones -->
+<div id="contenedor"></div>
+
+<!-- notificación local -->
+<div id="notifyBox" style="display:none" class="notifyLocal"></div>
+
+<!-- sonido de bombo -->
+<audio id="bomboSound" src="https://cdn.freesound.org/previews/256/256113_4486188-lq.mp3"></audio>
+
+<!-- música ambiente -->
+<audio id="musicaFondo" src="https://cdn.pixabay.com/audio/2022/10/25/audio_6bb2fa4e4b.mp3" loop></audio>
+
+<script>
+// ==========================================
+// CONEXIÓN WEBSOCKET DINÁMICA PARA RENDER
+// ==========================================
+const protocol = (location.protocol === "https:") ? "wss" : "ws";
+const wsUrl = `${protocol}://${location.host}`;
+const ws = new WebSocket(wsUrl);
+
+ws.addEventListener("open", () => {
+    // Se registra como jugador
+    const usuario = localStorage.getItem("usuarioTemporal") || "";
+    const usuarioKey = "player_" + usuario.toLowerCase().replace(/\s+/g, "_");
+
+    ws.send(JSON.stringify({
+        type: "player-join",
+        playerKey: usuarioKey
+    }));
+});
+
+// Recibir datos del servidor
+ws.addEventListener("message", (ev) => {
+    const data = JSON.parse(ev.data);
+
+    // El admin asignó cartones → recibirlos
+    if (data.type === "assign-cartones") {
+        const usuario = localStorage.getItem("usuarioTemporal") || "";
+        const key = "player_" + usuario.toLowerCase().replace(/\s+/g, "_");
+
+        const p = JSON.parse(localStorage.getItem(key) || "{}");
+        p.cartonesRender = data.cartones;
+        p.asignado = true;
+        localStorage.setItem(key, JSON.stringify(p));
+
+        location.reload();
+    }
+
+    // Nuevo número desde admin
+    if (data.type === "number") {
+        const num = data.number;
+
+        localStorage.setItem("ultimoNumero", num);
+
+        let arr = JSON.parse(localStorage.getItem("numerosSorteados") || "[]");
+        if (!arr.includes(num)) arr.push(num);
+        localStorage.setItem("numerosSorteados", JSON.stringify(arr));
+    }
+
+    // Reinicio del sorteo
+    if (data.type === "reset") {
+        localStorage.removeItem("numerosSorteados");
+        localStorage.removeItem("ultimoNumero");
+        location.reload();
+    }
+});
+</script>
+
+<script>
+// Activar música ambiente con primer click
+window.addEventListener("click", () => {
+    const mus = document.getElementById("musicaFondo");
+    if (mus.paused) {
+        mus.volume = 0.15;
+        mus.play();
+    }
+}, { once: true });
+</script>
+
+<script>
+/* ============================================================
+   REGISTRO DEL JUGADOR
+============================================================ */
+const usuario = localStorage.getItem("usuarioTemporal") || "";
+document.getElementById("jugador").textContent = "Jugador: " + usuario;
+
+const usuarioKey = "player_" + usuario.toLowerCase().replace(/\s+/g,"_");
+
+if (!localStorage.getItem(usuarioKey)) {
+    const nuevo = {
+        nombre: usuario,
+        asignado: false,
+        cartonesRender: null
+    };
+    localStorage.setItem(usuarioKey, JSON.stringify(nuevo));
+    localStorage.setItem("ultimaEntradaJugador", Date.now());
+}
+
+/* ============================================================
+   CARGAR CARTONES SI FUERON ASIGNADOS
+============================================================ */
+const key = usuarioKey;
+const data = JSON.parse(localStorage.getItem(key) || "{}");
+
+if (!data || !data.cartonesRender) {
+    document.body.innerHTML = "<h3>No tenés cartones asignados</h3>";
+    throw "No cartón";
+}
+
+const cartones = data.cartonesRender;
+const cont = document.getElementById("contenedor");
+
+/* ============================================================
+   RENDER
+============================================================ */
+function render() {
+    cont.innerHTML = "";
+
+    const marcados = JSON.parse(localStorage.getItem("marcados_"+key) || "[]");
+
+    cartones.forEach((tabla, idx)=>{
+        const card = document.createElement("div");
+        card.className = "carton";
+
+        card.innerHTML = `<div class='titulo'>Cartón ${idx+1}</div>`;
+        const table = document.createElement("table");
+        table.className = "tabla";
+
+        tabla.forEach(fila=>{
+            const tr = document.createElement("tr");
+
+            fila.forEach(celda=>{
+                const td = document.createElement("td");
+
+                if (celda === null) {
+                    td.className = "vacio";
+                } else {
+                    td.textContent = celda;
+
+                    if (marcados.includes(celda)) {
+                        td.classList.add("marcada");
+                    }
+
+                    td.onclick = ()=>toggle(celda);
+                }
+
+                tr.appendChild(td);
+            });
+
+            table.appendChild(tr);
+        });
+
+        card.appendChild(table);
+        cont.appendChild(card);
+    });
+}
+
+/* ============================================================
+   MARCADO MANUAL
+============================================================ */
+function toggle(num){
+    let marcados = JSON.parse(localStorage.getItem("marcados_"+key) || "[]");
+
+    if (marcados.includes(num))
+        marcados = marcados.filter(n=>n!==num);
+    else
+        marcados.push(num);
+
+    localStorage.setItem("marcados_"+key, JSON.stringify(marcados));
+
+    render();
+    detectarFigurasYNotificar();
+}
+
+/* ============================================================
+   SIGNIFICADO ARGENTINO
+============================================================ */
+const significado = {
+  1:"El uno", 2:"El niño", 3:"San Cono", 4:"La cama", 5:"El gato",
+  6:"El perro", 7:"El revólver", 8:"El incendio", 9:"El arroyo",
+  10:"La leche", 11:"Los palos", 12:"El soldado", 13:"La yeta",
+  14:"El borracho", 15:"La niña bonita", 16:"El anillo", 17:"La desgracia",
+  18:"La sangre", 19:"El pescado", 20:"La fiesta", 21:"La mujer",
+  22:"Los dos patitos", 23:"El cocinero", 24:"El caballo", 25:"El gallo",
+  26:"La misa", 27:"El peine", 28:"El cerro", 29:"El vino", 30:"Santa Rosa",
+  31:"La luz", 32:"El dinero", 33:"Cristo", 34:"La cabeza", 35:"El pajarito",
+  36:"La manteca", 37:"El dentista", 38:"Las piedras", 39:"La lluvia",
+  40:"El cura", 41:"El cuchillo", 42:"La zapatilla", 43:"El balcón",
+  44:"La cárcel", 45:"El vino blanco", 46:"Los tomates", 47:"El muerto",
+  48:"El muerto que habla", 49:"La carne", 50:"El pan", 51:"El serrucho",
+  52:"La madre", 53:"El barco", 54:"La vaca", 55:"Los gallegos",
+  56:"La caída", 57:"Las plantas", 58:"El ahogado", 59:"Las plantas",
+  60:"La virgen", 61:"La escopeta", 62:"La inundación", 63:"El casamiento",
+  64:"El llanto", 65:"El cazador", 66:"Las lombrices", 67:"El mordisco",
+  68:"El sobrino", 69:"Los vicios", 70:"El muerto", 71:"Excremento",
+  72:"La sorpresa", 73:"El hospital", 74:"El negro", 75:"El payaso",
+  76:"Los ladridos", 77:"Las piernas", 78:"La ramera", 79:"El ladrón",
+  80:"La bocha", 81:"Las flores", 82:"La pelea", 83:"El mal tiempo",
+  84:"La iglesia", 85:"La linterna", 86:"El humo", 87:"Las luces",
+  88:"El papa", 89:"La rata", 90:"El miedo"
+};
+
+/* ============================================================
+   VOZ + BOMBO
+============================================================ */
+function hablar(numero) {
+    if (!numero) return;
+
+    const texto = `${numero}, ${significado[numero] || ""}`;
+    const voz = new SpeechSynthesisUtterance(texto);
+
+    voz.lang = "es-AR";
+    voz.rate = 0.9;
+    voz.pitch = 1;
+
+    speechSynthesis.speak(voz);
+}
+
+/* ============================================================
+   ÚLTIMOS 3 NÚMEROS
+============================================================ */
+function actualizarUltimosTresPlayer(arr) {
+    const cont = document.getElementById("numerosAnimP");
+
+    [...cont.children].forEach(c=>{
+        c.classList.add("fadeOutP");
+        setTimeout(()=>c.remove(),300);
+    });
+
+    const ult = arr.slice(-3);
+
+    setTimeout(()=>{
+        ult.forEach(num=>{
+            const d = document.createElement("div");
+            d.className = "numBoxP";
+            d.textContent = num;
+            cont.appendChild(d);
+
+            setTimeout(()=>d.classList.add("show"),50);
+        });
+    },350);
+}
+
+/* ============================================================
+   NOTIFICACIONES
+============================================================ */
+function pushNotificacion(obj) {
+    const raw = localStorage.getItem("notificaciones") || "[]";
+    const arr = JSON.parse(raw);
+    arr.push(obj);
+    localStorage.setItem("notificaciones", JSON.stringify(arr));
+    mostrarNotificacionLocal(obj.mensaje);
+}
+
+function mostrarNotificacionLocal(text) {
+    const box = document.getElementById("notifyBox");
+    box.textContent = text;
+    box.style.display = "block";
+    setTimeout(()=> box.style.display="none", 3500);
+}
+
+/* ============================================================
+   TERNA / CUATERNA / QUINTINA / BINGO
+============================================================ */
+// ==========================================
+function enviarReporteAlAdmin(tipo, usuario, idxCart, idxFila = null) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: "report",
+            report: {
+                tipo: tipo,
+                jugador: usuario,
+                cartonIndex: idxCart,
+                filaIndex: idxFila,
+                mensaje: `${tipo} del jugador ${usuario} en cartón ${idxCart+1}` +
+                         (idxFila !== null ? `, fila ${idxFila+1}` : "")
+            }
+        }));
+    }
+}
+// ==========================================
+function detectarFigurasYNotificar() {
+    let reportes = JSON.parse(localStorage.getItem("reportes_" + key) || "{}");
+    const marcados = JSON.parse(localStorage.getItem("marcados_" + key) || "[]");
+
+    cartones.forEach((tabla, idxCart) => {
+
+        // -----------------------------
+        // BINGO
+        // -----------------------------
+        const numsTabla = tabla.flat().filter(n => n !== null);
+        const totalMarcados = numsTabla.filter(n => marcados.includes(n)).length;
+
+        if (totalMarcados === numsTabla.length && !reportes[`bingo_${idxCart}`]) {
+
+            // Marcar como reportado
+            reportes[`bingo_${idxCart}`] = true;
+
+            // Enviar al admin
+            enviarReporteAlAdmin("BINGO", usuario, idxCart);
+
+            // Notificación local
+            pushNotificacion({
+                id: "notif_" + Date.now(),
+                tipo: "BINGO",
+                jugador: usuario,
+                cartonIndex: idxCart,
+                mensaje: `BINGO del jugador ${usuario} en cartón ${idxCart + 1}`,
+                ts: Date.now(),
+                visto: false
+            });
+        }
+
+        // -----------------------------
+        // FILAS (terna / quintina)
+        // -----------------------------
+        tabla.forEach((fila, idxFila) => {
+            const numsFila = fila.filter(n => n !== null);
+            const marcFila = numsFila.filter(n => marcados.includes(n)).length;
+
+            const keyRep = `c${idxCart}f${idxFila}`;
+            const repFila = reportes[keyRep] || [];
+
+            // ---------- TERNA (3 marcados) ----------
+            if (marcFila >= 3 && !repFila.includes("terna")) {
+
+                repFila.push("terna");
+
+                enviarReporteAlAdmin("TERNA", usuario, idxCart, idxFila);
+
+                pushNotificacion({
+                    id: "notif_" + Date.now(),
+                    tipo: "TERNA",
+                    jugador: usuario,
+                    cartonIndex: idxCart,
+                    filaIndex: idxFila,
+                    mensaje: `Terna del jugador ${usuario} — Cartón ${idxCart + 1}, fila ${idxFila + 1}`,
+                    ts: Date.now(),
+                    visto: false
+                });
+            }
+
+            // ---------- QUINTINA (5 marcados) ----------
+            if (marcFila >= 5 && !repFila.includes("quintina")) {
+
+                repFila.push("quintina");
+
+                enviarReporteAlAdmin("QUINTINA", usuario, idxCart, idxFila);
+
+                pushNotificacion({
+                    id: "notif_" + Date.now(),
+                    tipo: "QUINTINA",
+                    jugador: usuario,
+                    cartonIndex: idxCart,
+                    filaIndex: idxFila,
+                    mensaje: `Quintina del jugador ${usuario} — Cartón ${idxCart + 1}, fila ${idxFila + 1}`,
+                    ts: Date.now(),
+                    visto: false
+                });
+            }
+
+            reportes[keyRep] = repFila;
+        });
+
+    });
+
+    localStorage.setItem("reportes_" + key, JSON.stringify(reportes));
+}
+
+/* ============================================================
+   ESCUCHAR NUEVO NÚMERO
+============================================================ */
+let ultimoMarcado = null;
+
+function revisarNumeroNuevo() {
+    const nuevo = parseInt(localStorage.getItem("ultimoNumero") || "0");
+
+    if (!nuevo || nuevo === ultimoMarcado) return;
+    ultimoMarcado = nuevo;
+
+    const arr = JSON.parse(localStorage.getItem("numerosSorteados") || "[]");
+
+    actualizarUltimosTresPlayer(arr);
+    hablar(nuevo);
+
+    // BOMBO SUAVE
+    document.getElementById("bomboSound").volume = 0.35;
+    document.getElementById("bomboSound").play();
+
+    let marcados = JSON.parse(localStorage.getItem("marcados_"+key) || "[]");
+
+    const existe = cartones.some(t => t.flat().includes(nuevo));
+
+    if (existe && !marcados.includes(nuevo)) {
+        marcados.push(nuevo);
+        localStorage.setItem("marcados_"+key, JSON.stringify(marcados));
+
+        render();
+
+        setTimeout(()=>{
+            document.querySelectorAll("td").forEach(td=>{
+                if (td.textContent == nuevo) {
+                    td.classList.add("flashAuto");
+                    setTimeout(()=>td.classList.remove("flashAuto"),800);
+                }
+            });
+        },100);
+    }
+
+    detectarFigurasYNotificar();
+}
+
+setInterval(revisarNumeroNuevo, 700);
+
+/* ============================================================
+   INICIO
+============================================================ */
+render();
+
+const arrInit = JSON.parse(localStorage.getItem("numerosSorteados") || "[]");
+if (arrInit.length) actualizarUltimosTresPlayer(arrInit);
+</script>
+
+</body>
+</html>

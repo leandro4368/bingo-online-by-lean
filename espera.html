@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Esperando asignación</title>
+
+<style>
+body {
+    background: #060d18;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+    padding: 40px;
+}
+
+.box {
+    background: rgba(255,255,255,0.06);
+    padding: 25px;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.1);
+    display: inline-block;
+}
+
+.loader {
+    margin-top: 25px;
+    border: 6px solid rgba(255,255,255,0.2);
+    border-top: 6px solid #ffc107;
+    border-radius: 50%;
+    width: 45px;
+    height: 45px;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+</style>
+</head>
+<body>
+
+<div class="box">
+    <h2 id="nombreJugador">Jugador</h2>
+    <p>Esperá un momento… el administrador te asignará tus cartones.</p>
+    <div class="loader"></div>
+</div>
+
+<script>
+// ====================================================
+// CARGAR NOMBRE DEL JUGADOR (YA EXISTENTE EN TU APP)
+// ====================================================
+const usuario = localStorage.getItem("usuarioTemporal") || "Jugador";
+document.getElementById("nombreJugador").textContent = usuario;
+
+// ====================================================
+// REGISTRAR JUGADOR EN LOCALSTORAGE (ESTO FALTABA)
+// SIN ROMPER NADA DE LO QUE YA FUNCIONA
+// ====================================================
+const key = "player_" + usuario.toLowerCase().replace(/\s+/g, "_");
+
+// si no existe, lo crea
+if (!localStorage.getItem(key)) {
+    const data = {
+        nombre: usuario,
+        asignado: false,
+        cartonesRender: null
+    };
+
+    localStorage.setItem(key, JSON.stringify(data));
+}
+
+// Notificar al admin que entró un jugador nuevo
+localStorage.setItem("entradaJugador", Date.now());
+
+// ====================================================
+// DETECTAR SI YA LE ASIGNARON CARTONES
+// SI ES ASÍ, PASA AUTOMÁTICAMENTE AL PLAYER
+// ====================================================
+function revisarAsignacion() {
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+
+    try {
+        const info = JSON.parse(raw);
+        if (info.asignado === true && info.cartonesRender != null) {
+            window.location.href = "player.html";
+        }
+    } catch (e) {}
+}
+
+setInterval(revisarAsignacion, 1000);
+</script>
+
+</body>
+</html>
